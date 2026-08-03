@@ -4,15 +4,16 @@ import { db } from "@/db";
 import { budgets, categories, recurring, transactions } from "@/db/schema";
 
 const HOUSEHOLD_ID = "onn-noy-home";
-const defaults = [["דיור", "#6366f1"], ["רכב ודלק", "#f97316"], ["קניות", "#14b8a6"], ["שונות", "#64748b"], ["אוכל בחוץ", "#e879f9"], ["מנויים", "#8b5cf6"], ["חשבונות", "#0ea5e9"], ["בריאות", "#ef4444"], ["הכנסה", "#22c55e"]] as const;
+const defaults = [["דיור", "#6366f1"], ["רכב ודלק", "#f97316"], ["קניות", "#14b8a6"], ["שונות", "#64748b"], ["אוכל בחוץ", "#e879f9"], ["מנויים", "#8b5cf6"], ["חשבונות", "#0ea5e9"], ["בריאות", "#ef4444"], ["הכנסה", "#22c55e"], ["BIT", "#2563eb"], ["PAYBOX", "#06b6d4"], ["AliExpress", "#ef4444"]] as const;
 
 async function authorize() {
   return requireHomeflowUser();
 }
 
 async function seed() {
-  const existing = await db.select({ id: categories.id }).from(categories).where(eq(categories.householdId, HOUSEHOLD_ID)).limit(1);
-  if (!existing.length) await db.insert(categories).values(defaults.map(([name, color]) => ({ householdId: HOUSEHOLD_ID, name, color })));
+  await db.insert(categories)
+    .values(defaults.map(([name, color]) => ({ householdId: HOUSEHOLD_ID, name, color })))
+    .onConflictDoNothing({ target: [categories.householdId, categories.name] });
 }
 
 export async function GET(req: Request) {
@@ -38,6 +39,10 @@ export async function POST(req: Request) {
   }
   if (action === "delete") {
     await db.delete(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.id, Number(body.id))));
+    return Response.json({ ok: true });
+  }
+  if (action === "deleteRule") {
+    await db.delete(recurring).where(and(eq(recurring.householdId, HOUSEHOLD_ID), eq(recurring.id, Number(body.id))));
     return Response.json({ ok: true });
   }
   if (action === "category") {
