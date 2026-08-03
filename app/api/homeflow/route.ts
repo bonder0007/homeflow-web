@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, or, sql } from "drizzle-orm";
 import { requireHomeflowUser } from "@/auth";
 import { db } from "@/db";
 import { budgets, categories, recurring, transactions } from "@/db/schema";
@@ -22,19 +22,20 @@ export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
   const month = params.get("month") ?? new Date().toISOString().slice(0, 7);
   const compareMonths = [...new Set((params.get("compare") ?? "").split(",").filter(m => /^\d{4}-\d{2}$/.test(m)))].slice(0, 12);
-  const [cats, tx, rules, buds, compareTransactions] = await Promise.all([
+  const [cats, tx, pendingTransactions, rules, buds, compareTransactions] = await Promise.all([
     db.select().from(categories).where(eq(categories.householdId, HOUSEHOLD_ID)).orderBy(asc(categories.id)),
-    db.select().from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), gte(transactions.date, `${month}-01`), lte(transactions.date, `${month}-31`))).orderBy(desc(transactions.date)),
+    db.select().from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), gte(transactions.date, `${month}-01`), lte(transactions.date, `${month}-31`), ne(transactions.status, "pending_approval"))).orderBy(desc(transactions.date)),
+    db.select().from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), gte(transactions.date, `${month}-01`), lte(transactions.date, `${month}-31`), eq(transactions.status, "pending_approval"))).orderBy(desc(transactions.date)),
     db.select().from(recurring).where(eq(recurring.householdId, HOUSEHOLD_ID)).orderBy(desc(recurring.createdAt)),
     db.select().from(budgets).where(and(eq(budgets.householdId, HOUSEHOLD_ID), eq(budgets.month, month))),
-    compareMonths.length ? db.select().from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), or(...compareMonths.map(m => and(gte(transactions.date, `${m}-01`), lte(transactions.date, `${m}-31`)))))).orderBy(asc(transactions.date)) : Promise.resolve([]),
+    compareMonths.length ? db.select().from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), ne(transactions.status, "pending_approval"), or(...compareMonths.map(m => and(gte(transactions.date, `${m}-01`), lte(transactions.date, `${m}-31`)))))).orderBy(asc(transactions.date)) : Promise.resolve([]),
   ]);
   await Promise.all(tx.filter(item => item.source === "fixed").map(async item => {
     const rule = rules.find(r => r.title === item.description && r.categoryId === item.categoryId && r.member === item.member);
     if (rule) await db.update(transactions).set({ source: `fixed:${rule.id}` }).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.id, item.id), eq(transactions.source, "fixed")));
   }));
   const generatedRecurringIds = rules.filter(rule => tx.some(item => item.source === `fixed:${rule.id}` || (item.source === "fixed" && item.description === rule.title && item.categoryId === rule.categoryId && item.member === rule.member))).map(rule => rule.id);
-  return Response.json({ categories: cats, transactions: tx, recurring: rules, budgets: buds, generatedRecurringIds, compareTransactions });
+  return Response.json({ categories: cats, transactions: tx, pendingTransactions, recurring: rules, budgets: buds, generatedRecurringIds, compareTransactions });
 }
 
 export async function POST(req: Request) {
@@ -43,6 +44,39 @@ export async function POST(req: Request) {
   const action = String(body.action ?? "");
   if (action === "tx") {
     await db.insert(transactions).values({ householdId: HOUSEHOLD_ID, date: String(body.date), description: String(body.description), type: String(body.type), amount: Math.round(Number(body.amount) * 100), categoryId: Number(body.categoryId), member: String(body.member), status: String(body.status ?? "completed"), source: String(body.source ?? "occasional") });
+    return Response.json({ ok: true });
+  }
+  if (action === "importLeumi") {
+    const rows = Array.isArray(body.rows) ? body.rows.slice(0, 2000) as Record<string, unknown>[] : [];
+    const result = await db.transaction(async tx => {
+      let imported = 0, duplicates = 0;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${HOUSEHOLD_ID}:leumi-import`}))`);
+      for (const row of rows) {
+        const date = String(row.date ?? ""), description = String(row.description ?? "").trim(), type = row.type === "income" ? "income" : "expense", amount = Math.round(Math.abs(Number(row.amount)) * 100);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !description || !amount) continue;
+        const [existing] = await tx.select({ id: transactions.id }).from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.date, date), eq(transactions.description, description), eq(transactions.type, type), eq(transactions.amount, amount))).limit(1);
+        if (existing) { duplicates++; continue; }
+        const categoryId = row.categoryId == null ? null : Number(row.categoryId);
+        await tx.insert(transactions).values({ householdId: HOUSEHOLD_ID, date, description, type, amount, categoryId, member: "משותף", status: "pending_approval", source: "leumi-import" });
+        imported++;
+      }
+      return { imported, duplicates };
+    });
+    return Response.json({ ok: true, ...result });
+  }
+  if (action === "categorizePending") {
+    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite).slice(0, 2000) : [];
+    if (ids.length) await db.update(transactions).set({ categoryId: Number(body.categoryId) }).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.status, "pending_approval"), inArray(transactions.id, ids)));
+    return Response.json({ ok: true });
+  }
+  if (action === "approvePending") {
+    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite).slice(0, 2000) : [];
+    if (ids.length) await db.update(transactions).set({ status: "completed" }).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.status, "pending_approval"), isNotNull(transactions.categoryId), inArray(transactions.id, ids)));
+    return Response.json({ ok: true });
+  }
+  if (action === "deletePending") {
+    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Number.isFinite).slice(0, 2000) : [];
+    if (ids.length) await db.delete(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.status, "pending_approval"), inArray(transactions.id, ids)));
     return Response.json({ ok: true });
   }
   if (action === "delete") {
