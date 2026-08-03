@@ -46,18 +46,19 @@ export async function POST(req: Request) {
     await db.insert(transactions).values({ householdId: HOUSEHOLD_ID, date: String(body.date), description: String(body.description), type: String(body.type), amount: Math.round(Number(body.amount) * 100), categoryId: Number(body.categoryId), member: String(body.member), status: String(body.status ?? "completed"), source: String(body.source ?? "occasional") });
     return Response.json({ ok: true });
   }
-  if (action === "importLeumi") {
+  if (action === "importLeumi" || action === "importStatement") {
     const rows = Array.isArray(body.rows) ? body.rows.slice(0, 2000) as Record<string, unknown>[] : [];
     const result = await db.transaction(async tx => {
       let imported = 0, duplicates = 0;
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${HOUSEHOLD_ID}:leumi-import`}))`);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${HOUSEHOLD_ID}:statement-import`}))`);
       for (const row of rows) {
         const date = String(row.date ?? ""), description = String(row.description ?? "").trim(), type = row.type === "income" ? "income" : "expense", amount = Math.round(Math.abs(Number(row.amount)) * 100);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !description || !amount) continue;
         const [existing] = await tx.select({ id: transactions.id }).from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.date, date), eq(transactions.description, description), eq(transactions.type, type), eq(transactions.amount, amount))).limit(1);
         if (existing) { duplicates++; continue; }
         const categoryId = row.categoryId == null ? null : Number(row.categoryId);
-        await tx.insert(transactions).values({ householdId: HOUSEHOLD_ID, date, description, type, amount, categoryId, member: "משותף", status: "pending_approval", source: "leumi-import" });
+        const source = row.source === "max" ? "max-import" : "leumi-import";
+        await tx.insert(transactions).values({ householdId: HOUSEHOLD_ID, date, description, type, amount, categoryId, member: "משותף", status: "pending_approval", source });
         imported++;
       }
       return { imported, duplicates };

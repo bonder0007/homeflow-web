@@ -1,16 +1,16 @@
 import * as XLSX from "xlsx";
 
-export type ImportRow={date:string;description:string;amount:number;type:"expense"|"income";categoryId:number|null};
+export type ImportRow={date:string;description:string;amount:number;type:"expense"|"income";categoryId:number|null;source:"leumi"|"max";sourceCategory?:string;notes?:string};
 type Category={id:number;name:string};
 
 const clean=(value:unknown)=>String(value??"").trim();
 const key=(value:unknown)=>clean(value).replace(/[\s'"״׳_.-]/g,"").toLowerCase();
 const aliases={
-  date:["תאריך","תאריךעסקה","תאריךערך","יוםעסקה","date"],
-  description:["תיאור","תיאורהפעולה","פרטים","שםביתעסק","ביתעסק","description","details"],
+  date:["תאריך","תאריךעסקה","תאריךחיוב","תאריךערך","יוםעסקה","date"],
+  description:["תיאור","תיאורהפעולה","פרטים","שםביתעסק","שםביתהעסק","ביתעסק","description","details"],
   debit:["חובה","סכוםחובה","משיכה","חיוב","debit"],
   credit:["זכות","סכוםזכות","הפקדה","credit"],
-  amount:["סכום","סכוםעסקה","amount"],
+  amount:["סכום","סכוםעסקה","סכוםחיוב","amount"],
 };
 const findColumn=(headers:unknown[],names:string[])=>headers.findIndex(h=>names.includes(key(h)));
 const numberValue=(value:unknown)=>{if(typeof value==="number")return value;const normalized=clean(value).replace(/[₪,\s]/g,"").replace(/^\((.*)\)$/,"-$1");const n=Number(normalized);return Number.isFinite(n)?n:0};
@@ -27,20 +27,34 @@ const keywordCategories:Record<string,string[]>={
 };
 function categoryFor(description:string,categories:Category[]){const text=` ${description.toLowerCase()} `;const exact=categories.find(c=>text.includes(c.name.toLowerCase()));if(exact)return exact.id;for(const[name,words]of Object.entries(keywordCategories)){if(words.some(w=>text.includes(w))){const category=categories.find(c=>c.name.toLowerCase()===name.toLowerCase());if(category)return category.id}}return null}
 
+const maxCategoryMap:Record<string,string>={
+  "עיצוב הבית":"קניות","אופנה":"קניות","קוסמטיקה וטיפוח":"קניות","מזון וצריכה":"קניות",
+  "מסעדות, קפה וברים":"אוכל בחוץ","תחבורה ורכבים":"רכב ודלק","רפואה ובתי מרקחת":"בריאות",
+  "עירייה וממשלה":"חשבונות","שירותי תקשורת":"חשבונות",
+};
+function categoryForMax(description:string,sourceCategory:string,categories:Category[]){
+  const byDescription=categoryFor(description,categories);if(byDescription)return byDescription;
+  const mapped=maxCategoryMap[sourceCategory];return mapped?categories.find(c=>c.name===mapped)?.id??null:null;
+}
+
 export async function parseLeumiFile(file:File,categories:Category[]){
   const workbook=XLSX.read(await file.arrayBuffer(),{type:"array",cellDates:true});
-  const sheet=workbook.Sheets[workbook.SheetNames[0]];
-  const rows=XLSX.utils.sheet_to_json<unknown[]>(sheet,{header:1,raw:true,defval:""});
-  const headerIndex=rows.slice(0,25).findIndex(row=>findColumn(row,aliases.date)>=0&&findColumn(row,aliases.description)>=0&&(findColumn(row,aliases.amount)>=0||findColumn(row,aliases.debit)>=0||findColumn(row,aliases.credit)>=0));
-  if(headerIndex<0)throw new Error("לא נמצאו עמודות תאריך, תיאור וסכום בקובץ");
-  const headers=rows[headerIndex],dateCol=findColumn(headers,aliases.date),descriptionCol=findColumn(headers,aliases.description),debitCol=findColumn(headers,aliases.debit),creditCol=findColumn(headers,aliases.credit),amountCol=findColumn(headers,aliases.amount);
-  const parsed:ImportRow[]=[];let skipped=0;
-  for(const row of rows.slice(headerIndex+1)){
-    const date=dateValue(row[dateCol]),description=clean(row[descriptionCol]);if(!date||!description){if(row.some(Boolean))skipped++;continue}
-    const debit=debitCol>=0?numberValue(row[debitCol]):0,credit=creditCol>=0?numberValue(row[creditCol]):0,generic=amountCol>=0?numberValue(row[amountCol]):0;
-    const type:ImportRow["type"]=credit?"income":debit?"expense":generic<0?"expense":"income",amount=Math.abs(credit||debit||generic);if(!amount){skipped++;continue}
-    parsed.push({date,description,amount,type,categoryId:categoryFor(description,categories)});
+  const parsed:ImportRow[]=[];let skipped=0,recognizedSheets=0;
+  for(const sheetName of workbook.SheetNames){
+    const rows=XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName],{header:1,raw:true,defval:""});
+    const headerIndex=rows.slice(0,25).findIndex(row=>findColumn(row,aliases.date)>=0&&findColumn(row,aliases.description)>=0&&(findColumn(row,aliases.amount)>=0||findColumn(row,aliases.debit)>=0||findColumn(row,aliases.credit)>=0));
+    if(headerIndex<0)continue;recognizedSheets++;
+    const headers=rows[headerIndex],isMax=findColumn(headers,["4ספרותאחרונותשלכרטיסהאשראי"])>=0&&findColumn(headers,["תאריךחיוב"])>=0;
+    const dateCol=isMax?findColumn(headers,["תאריךחיוב"]):findColumn(headers,aliases.date),descriptionCol=findColumn(headers,aliases.description),debitCol=findColumn(headers,aliases.debit),creditCol=findColumn(headers,aliases.credit),amountCol=isMax?findColumn(headers,["סכוםחיוב"]):findColumn(headers,aliases.amount),sourceCategoryCol=findColumn(headers,["קטגוריה"]),notesCol=findColumn(headers,["הערות"]);
+    for(const row of rows.slice(headerIndex+1)){
+      const date=dateValue(row[dateCol]),description=clean(row[descriptionCol]);if(!date||!description){if(row.some(Boolean)&&clean(row[0])!=="סך הכל")skipped++;continue}
+      const debit=debitCol>=0?numberValue(row[debitCol]):0,credit=creditCol>=0?numberValue(row[creditCol]):0,generic=amountCol>=0?numberValue(row[amountCol]):0;
+      const type:ImportRow["type"]=isMax?(generic<0?"income":"expense"):(credit?"income":debit?"expense":generic<0?"expense":"income"),amount=Math.abs(credit||debit||generic);if(!amount){skipped++;continue}
+      const sourceCategory=sourceCategoryCol>=0?clean(row[sourceCategoryCol]):"",notes=notesCol>=0?clean(row[notesCol]):"";
+      parsed.push({date,description,amount,type,categoryId:isMax?categoryForMax(description,sourceCategory,categories):categoryFor(description,categories),source:isMax?"max":"leumi",sourceCategory:sourceCategory||undefined,notes:notes||undefined});
+    }
   }
+  if(!recognizedSheets)throw new Error("לא נמצאו עמודות תאריך, תיאור וסכום בקובץ");
   if(!parsed.length)throw new Error("לא נמצאו עסקאות תקינות בקובץ");
-  return{rows:parsed,skipped};
+  return{rows:parsed,skipped,provider:parsed.every(r=>r.source==="max")?"MAX":parsed.every(r=>r.source==="leumi")?"לאומי":"משולב"};
 }
