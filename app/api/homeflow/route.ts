@@ -48,6 +48,7 @@ export async function POST(req: Request) {
   }
   if (action === "importLeumi" || action === "importStatement") {
     const rows = Array.isArray(body.rows) ? body.rows.slice(0, 2000) as Record<string, unknown>[] : [];
+    if (rows.some(row => row.categoryId == null || !Number.isFinite(Number(row.categoryId)))) return Response.json({ error: "category_required" }, { status: 400 });
     const result = await db.transaction(async tx => {
       let imported = 0, duplicates = 0;
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${HOUSEHOLD_ID}:statement-import`}))`);
@@ -83,6 +84,11 @@ export async function POST(req: Request) {
   if (action === "delete") {
     await db.delete(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.id, Number(body.id))));
     return Response.json({ ok: true });
+  }
+  if (action === "deleteMany") {
+    const ids = Array.isArray(body.ids) ? [...new Set(body.ids.map(Number).filter(Number.isFinite))].slice(0, 2000) : [];
+    if (ids.length) await db.delete(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), ne(transactions.status, "pending_approval"), inArray(transactions.id, ids)));
+    return Response.json({ ok: true, deleted: ids.length });
   }
   if (action === "deleteRule") {
     await db.delete(recurring).where(and(eq(recurring.householdId, HOUSEHOLD_ID), eq(recurring.id, Number(body.id))));
