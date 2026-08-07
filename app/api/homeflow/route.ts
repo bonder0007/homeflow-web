@@ -46,6 +46,12 @@ export async function POST(req: Request) {
     await db.insert(transactions).values({ householdId: HOUSEHOLD_ID, date: String(body.date), description: String(body.description), type: String(body.type), amount: Math.round(Number(body.amount) * 100), categoryId: Number(body.categoryId), member: String(body.member), status: String(body.status ?? "completed"), source: String(body.source ?? "occasional") });
     return Response.json({ ok: true });
   }
+  if (action === "editTx") {
+    const id = Number(body.id), amount = Math.round(Math.abs(Number(body.amount)) * 100), date = String(body.date), description = String(body.description).trim();
+    if (!Number.isFinite(id) || !Number.isFinite(amount) || amount <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !description) return Response.json({ error: "invalid_transaction" }, { status: 400 });
+    await db.update(transactions).set({ date, description, type: body.type === "income" ? "income" : "expense", amount, categoryId: Number(body.categoryId), member: String(body.member) }).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.id, id), ne(transactions.status, "pending_approval")));
+    return Response.json({ ok: true });
+  }
   if (action === "importLeumi" || action === "importStatement") {
     const rows = Array.isArray(body.rows) ? body.rows.slice(0, 2000) as Record<string, unknown>[] : [];
     if (rows.some(row => row.categoryId == null || !Number.isFinite(Number(row.categoryId)))) return Response.json({ error: "category_required" }, { status: 400 });
