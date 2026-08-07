@@ -57,12 +57,15 @@ export async function POST(req: Request) {
     if (rows.some(row => row.categoryId == null || !Number.isFinite(Number(row.categoryId)))) return Response.json({ error: "category_required" }, { status: 400 });
     const result = await db.transaction(async tx => {
       let imported = 0, duplicates = 0;
+      const occurrences = new Map<string, number>();
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${HOUSEHOLD_ID}:statement-import`}))`);
       for (const row of rows) {
         const date = String(row.date ?? ""), description = String(row.description ?? "").trim(), type = row.type === "income" ? "income" : "expense", amount = Math.round(Math.abs(Number(row.amount)) * 100);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !description || !amount) continue;
-        const [existing] = await tx.select({ id: transactions.id }).from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.date, date), eq(transactions.description, description), eq(transactions.type, type), eq(transactions.amount, amount))).limit(1);
-        if (existing) { duplicates++; continue; }
+        const key = `${date}\u0000${description}\u0000${type}\u0000${amount}`, occurrence = (occurrences.get(key) ?? 0) + 1;
+        occurrences.set(key, occurrence);
+        const [existing] = await tx.select({ count: sql<number>`count(*)::int` }).from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.date, date), eq(transactions.description, description), eq(transactions.type, type), eq(transactions.amount, amount)));
+        if (existing.count >= occurrence) { duplicates++; continue; }
         const categoryId = row.categoryId == null ? null : Number(row.categoryId);
         const source = row.source === "max" ? "max-import" : "leumi-import";
         await tx.insert(transactions).values({ householdId: HOUSEHOLD_ID, date, description, type, amount, categoryId, member: "משותף", status: "pending_approval", source });
