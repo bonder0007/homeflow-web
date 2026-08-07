@@ -18,11 +18,11 @@ const dateValue=(value:unknown)=>{let d:Date|undefined;if(value instanceof Date)
 const dateInStatementMonth=(transactionDate:string,chargeDate:string)=>{if(!chargeDate)return transactionDate;const charge=new Date(`${chargeDate}T12:00:00`);charge.setMonth(charge.getMonth()-1);const year=charge.getFullYear(),month=charge.getMonth()+1,day=transactionDate?Number(transactionDate.slice(8,10)):1,lastDay=new Date(year,month,0).getDate();return `${year}-${String(month).padStart(2,"0")}-${String(Math.min(day,lastDay)).padStart(2,"0")}`};
 const keywordCategories:Record<string,string[]>={
   "AliExpress":["aliexpress","עלי אקספרס","אליאקספרס"],"BIT":[" bit ","העברה בביט","תשלום בביט"],"PAYBOX":["paybox","פייבוקס"],"הכנסה":["משכורת","שכר עבודה","זיכוי משכורת"],
-  "רכב ודלק":["פז","דלק","סונול","דור אלון","yellow","כביש 6","פנגו","סלופארק","חניון"],
+  "רכב ודלק":["פז","דלק","סונול","דור אלון","yellow","כביש 6","פנגו","סלופארק","חניון","ליברה ביטוח רכב","ליברה ביטוח חובה","ליברה עסקות ביטוח"],
   "אוכל בחוץ":["וולט","wolt","מסעדה","קפה","פיצה","בורגר","מקדונלד"],
   "קניות":["שופרסל","רמי לוי","ויקטורי","יוחננוף","סופר","מחסני השוק","אושר עד"],
   "חשבונות":["חשמל","מים","ארנונה","בזק","הוט","סלקום","פרטנר"],
-  "מנויים":["netflix","spotify","google","apple","youtube"],
+  "מנויים":["netflix","spotify","google","apple","youtube","openai","open ai","chatgpt"],
   "בריאות":["סופר פארם","בית מרקחת","מכבי","כללית","רופא"],
   "דיור":["שכירות","משכנתא","ועד בית"],
 };
