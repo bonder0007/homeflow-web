@@ -1,0 +1,44 @@
+.dashboard .kpis {
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dashboard .kpi {
+  min-height: 72px;
+  padding: 12px 15px;
+}
+
+.dashboard .kpi > i {
+  width: 36px;
+  height: 36px;
+}
+
+.dashboard .cols {
+  align-items: start;
+  gap: 12px;
+}
+
+.dashboard .card {
+  height: auto;
+  padding: 15px;
+}
+
+.dashboard .chead {
+  margin-bottom: 12px;
+}
+
+.dashboard .bars {
+  gap: 9px;
+}
+
+.dashboard .compare-grid {
+  gap: 8px;
+}
+
+.dashboard .compare-grid article {
+  padding: 11px;
+}
+
+.dashboard .compare-grid h3 {
+  margin-bottom: 8px;
+}
