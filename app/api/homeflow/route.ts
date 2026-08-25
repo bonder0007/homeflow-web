@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { budgets, categories, recurring, transactions } from "@/db/schema";
 
 const HOUSEHOLD_ID = "onn-noy-home";
-const defaults = [["דיור", "#6366f1"], ["רכב ודלק", "#f97316"], ["קניות", "#14b8a6"], ["שונות", "#64748b"], ["אוכל בחוץ", "#e879f9"], ["מנויים", "#8b5cf6"], ["חשבונות", "#0ea5e9"], ["בריאות", "#ef4444"], ["הכנסה", "#22c55e"], ["BIT", "#2563eb"], ["PAYBOX", "#06b6d4"], ["AliExpress", "#ef4444"]] as const;
+const defaults = [["דיור", "#6366f1"], ["רכב ודלק", "#f97316"], ["קניות", "#14b8a6"], ["שונות", "#64748b"], ["אוכל בחוץ", "#e879f9"], ["מנויים", "#8b5cf6"], ["חשבונות", "#0ea5e9"], ["בריאות", "#ef4444"], ["הכנסה", "#22c55e"], ["העברות בין חשבונות", "#a855f7"], ["BIT", "#2563eb"], ["PAYBOX", "#06b6d4"], ["AliExpress", "#ef4444"]] as const;
 
 async function authorize() {
   return requireHomeflowUser();
@@ -67,7 +67,7 @@ export async function POST(req: Request) {
         const [existing] = await tx.select({ count: sql<number>`count(*)::int` }).from(transactions).where(and(eq(transactions.householdId, HOUSEHOLD_ID), eq(transactions.date, date), eq(transactions.description, description), eq(transactions.type, type), eq(transactions.amount, amount)));
         if (existing.count >= occurrence) { duplicates++; continue; }
         const categoryId = row.categoryId == null ? null : Number(row.categoryId);
-        const source = row.source === "max" ? "max-import" : "leumi-import";
+        const source = row.source === "max" ? "max-import" : row.isAccountTransfer ? `leumi-transfer-${type === "income" ? "in" : "out"}` : "leumi-import";
         await tx.insert(transactions).values({ householdId: HOUSEHOLD_ID, date, description, type, amount, categoryId, member: "משותף", status: "pending_approval", source });
         imported++;
       }
